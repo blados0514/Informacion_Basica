@@ -1,0 +1,234 @@
+
+--codigo
+
+
+FUNCTION ft_validar_pago (av_placa VARCHAR,av_vigencia NUMBER, an_parametro NUMBER) RETURN BOOLEAN AS
+
+lb_existe BOOLEAN:=FALSE;
+
+BEGIN
+    iv_vigencia:='';
+    
+    IF an_parametro = 1 THEN
+          SELECT (vigencia ||'|'|| fecha_pago ||'|'|| valor_pago) INTO iv_vigencia FROM bd_fiscalizacion.fc_reporte_pagos
+          WHERE nro_placa = av_placa AND vigencia = av_vigencia AND ROWNUM = 1;
+    ELSE
+          SELECT (vigencia ||'|'|| fecha_pago ||'|'|| (impuesto + sancion + interes_mora)) INTO iv_vigencia 
+          FROM bd_fiscalizacion.fc_pagos_QX
+          WHERE nro_placa = av_placa AND vigencia = av_vigencia AND ROWNUM = 1;
+    END IF;
+            
+            IF iv_vigencia IS NOT NULL THEN
+                lb_existe := TRUE;
+            END IF ;
+            
+            RETURN lb_existe;
+            
+EXCEPTION          
+WHEN OTHERS THEN
+RETURN lb_existe;
+END ft_validar_pago;
+
+PROCEDURE sp_reporte_pagos_2 AS 
+
+/*ISVA 
+Nombre     :sp_reporte_pagos
+Autor      :Blados.Ospina
+Fecha      :10/09/2018
+Variables  :ln_vigencia_fin, lv_existe
+Variables  :lv_sqltext, lv_placa, ln_commit
+Retorno    :              
+Proyecto   :PKG_REPORTE_PAGOS
+VersiÛn    :1.0
+Objetivo   :Verifica cada uno de los pagos
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+10/09/2018  Blados.Ospina   1.0                     */
+
+ln_vigencia_fin Number:=iv_cantidad_vigencia;
+lb_existe BOOLEAN;
+lv_sqltext VARCHAR2(255 BYTE);
+lv_placa VARCHAR2(255 BYTE);
+ln_commit NUMBER:=0;
+
+CURSOR lcur_placa_vigencia IS SELECT DISTINCT nro_placa, modelo FROM reporte_pagos;
+
+BEGIN
+    FOR ln_index IN lcur_placa_vigencia LOOP
+        FOR I IN (ln_index.modelo-1)..ln_vigencia_fin LOOP
+            lb_existe:=FALSE;
+            ln_commit:= ln_commit + 1;
+            
+            lb_existe := ft_validar_pago (ln_index.nro_placa, I, 1);
+                IF lb_existe = TRUE THEN
+                    lv_sqltext:= 'UPDATE REPORTE_PAGOS' ||
+                    ' SET A_' || I || ' = ' ||''''|| iv_vigencia ||''''||
+                    ' WHERE nro_placa = '||''''|| ln_index.nro_placa || ''''; 
+                    --DBMS_OUTPUT.PUT_LINE(lv_sqltext);
+                    EXECUTE IMMEDIATE lv_sqltext;           
+                END IF;
+                IF ln_commit = 100 THEN 
+                   ln_commit:=0;
+                   COMMIT;
+                END IF;
+        END LOOP;
+    END LOOP;
+END sp_reporte_pagos_2;
+
+PROCEDURE sp_reporte_pagos_qx_2 AS 
+
+/*ISVA 
+Nombre     :sp_reporte_pagos
+Autor      :Blados.Ospina
+Fecha      :10/09/2018
+Variables  :ln_vigencia_fin, lv_existe
+Variables  :lv_sqltext, lv_placa, ln_commit
+Retorno    :              
+Proyecto   :PKG_REPORTE_PAGOS
+VersiÛn    :1.0
+Objetivo   :Verifica cada uno de los pagos
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+10/09/2018  Blados.Ospina   1.0                     */
+
+ln_vigencia_fin Number:=2012;
+lb_existe BOOLEAN;
+lv_sqltext VARCHAR2(255 BYTE);
+lv_placa VARCHAR2(255 BYTE);
+ln_commit NUMBER:=0;
+
+CURSOR lcur_placa_vigencia IS SELECT DISTINCT nro_placa, modelo FROM reporte_pagos;
+
+BEGIN
+    FOR ln_index IN lcur_placa_vigencia LOOP
+        FOR I IN (ln_index.modelo-1)..ln_vigencia_fin LOOP
+            lb_existe :=FALSE; 
+            ln_commit:= ln_commit + 1;
+             lb_existe := ft_validar_pago(ln_index.nro_placa, I, 2);
+                IF lb_existe =TRUE THEN
+                    lv_sqltext:= 'UPDATE reporte_pagos' ||
+                    ' SET A_' || I || ' = ' ||''''|| iv_vigencia ||''''||
+                    ' WHERE nro_placa = '||''''|| ln_index.nro_placa || ''''; 
+                    --DBMS_OUTPUT.PUT_LINE(lv_sqltext);
+                    EXECUTE IMMEDIATE lv_sqltext;          
+                END IF;
+                IF ln_commit = 100 THEN 
+                   ln_commit:=0;
+                   COMMIT;
+                END IF;
+        END LOOP;
+    END LOOP;
+END sp_reporte_pagos_qx_2;
+
+PROCEDURE sp_reporte_pagos AS 
+
+/*ISVA 
+Nombre     :sp_reporte_pagos
+Autor      :Blados.Ospina
+Fecha      :10/09/2018
+Variables  :ln_vigencia_fin, lv_existe
+Variables  :lv_sqltext, lv_placa, ln_commit
+Retorno    :              
+Proyecto   :PKG_REPORTE_PAGOS
+VersiÛn    :1.0
+Objetivo   :Verifica cada uno de los pagos
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+10/09/2018  Blados.Ospina   1.0                     */
+
+ln_vigencia_fin Number:=iv_cantidad_vigencia;
+lv_existe VARCHAR2(5 BYTE);
+lv_sqltext VARCHAR2(255 BYTE);
+lv_placa VARCHAR2(255 BYTE);
+ln_commit NUMBER:=0;
+
+CURSOR lcur_placa_vigencia IS SELECT DISTINCT nro_placa, modelo FROM reporte_pagos;
+
+BEGIN
+    FOR ln_index IN lcur_placa_vigencia LOOP
+        FOR I IN (ln_index.modelo-2)..ln_vigencia_fin LOOP
+            ln_commit:= ln_commit + 1;
+            SELECT DECODE(count(1),0,'FALSE','TRUE') INTO lv_existe FROM bd_fiscalizacion.fc_reporte_pagos
+            WHERE nro_placa = ln_index.nro_placa AND vigencia = I;
+                IF lv_existe = 'TRUE' THEN
+                    lv_sqltext:= 'update reporte_pagos' ||
+                    ' set A_' || I || ' = ' || I ||
+                    ' where nro_placa = '||''''|| ln_index.nro_placa || ''''; 
+                    --DBMS_OUTPUT.PUT_LINE(lv_sqltext);
+                    EXECUTE IMMEDIATE lv_sqltext;
+                    lv_existe :='FALSE';              
+                END IF;
+                IF ln_commit = 100 THEN 
+                   ln_commit:=0;
+                   COMMIT;
+                END IF;
+                  COMMIT;
+        END LOOP;
+    END LOOP;
+    COMMIT;
+END sp_reporte_pagos;
+
+PROCEDURE sp_reporte_pagos_qx AS 
+
+/*ISVA 
+Nombre     :sp_reporte_pagos
+Autor      :Blados.Ospina
+Fecha      :10/09/2018
+Variables  :ln_vigencia_fin, lv_existe
+Variables  :lv_sqltext, lv_placa, ln_commit
+Retorno    :              
+Proyecto   :PKG_REPORTE_PAGOS
+VersiÛn    :1.0
+Objetivo   :Verifica cada uno de los pagos
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+10/09/2018  Blados.Ospina   1.0                     */
+
+ln_vigencia_fin Number:=2020;
+lv_existe VARCHAR2(5 BYTE);
+lv_sqltext VARCHAR2(255 BYTE);
+lv_placa VARCHAR2(255 BYTE);
+ln_commit NUMBER:=0;
+
+CURSOR lcur_placa_vigencia IS SELECT DISTINCT nro_placa, modelo FROM reporte_pagos;
+
+BEGIN
+    FOR ln_index IN lcur_placa_vigencia LOOP
+        FOR I IN (ln_index.modelo-2)..ln_vigencia_fin LOOP
+            ln_commit:= ln_commit + 1;
+            SELECT DECODE(count(1),0,'FALSE','TRUE') INTO lv_existe FROM bd_fiscalizacion.fc_pagos_qx
+            WHERE nro_placa = ln_index.nro_placa AND vigencia = I;
+                IF lv_existe = 'TRUE' THEN
+                    lv_sqltext:= 'update reporte_pagos' ||
+                    ' set A_' || I || ' = ' || I ||
+                    ' where nro_placa = '||''''|| ln_index.nro_placa || ''''; 
+                    --DBMS_OUTPUT.PUT_LINE(lv_sqltext);
+                    EXECUTE IMMEDIATE lv_sqltext;
+                    lv_existe :='FALSE';              
+                END IF;
+                IF ln_commit = 100 THEN 
+                   ln_commit:=0;
+                   COMMIT;
+                END IF;
+                  COMMIT;
+        END LOOP;
+    END LOOP;
+    COMMIT;
+END sp_reporte_pagos_qx;
+
+PROCEDURE SP_INICAR AS
+BEGIN
+    sp_reporte_pagos;
+    sp_reporte_pagos_qx;
+    
+    --sp_reporte_pagos_2;
+    --sp_reporte_pagos_qx_2;
+END SP_INICAR;
