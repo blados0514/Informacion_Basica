@@ -1,0 +1,43 @@
+--head 
+
+create or replace TYPE                                                             TP_RUNT_CONTRIBUYENTES AS OBJECT 
+(
+nro_placa VARCHAR2(10 BYTE),
+id_usuario VARCHAR2(255 BYTE), 
+digito_verificacion VARCHAR2(1 BYTE),
+id_documento VARCHAR2(255 BYTE),
+nombres VARCHAR2(255 BYTE),
+apellidos VARCHAR2(255 BYTE),
+direccion VARCHAR2(255 BYTE),
+telefono VARCHAR2(255 BYTE),
+fax VARCHAR2(255 BYTE),
+email VARCHAR2(255 BYTE),
+celular VARCHAR2(255 BYTE),
+municipio VARCHAR2(255 BYTE),
+departamento VARCHAR2(255 BYTE),
+id_ciudad_dir VARCHAR2(255 BYTE),
+radicado VARCHAR2(255 BYTE),
+estado VARCHAR2(255 BYTE),
+Constructor Function TP_RUNT_CONTRIBUYENTES Return Self As Result
+)
+
+-- Body
+
+create or replace TYPE BODY TP_RUNT_CONTRIBUYENTES AS
+
+  Constructor Function TP_RUNT_CONTRIBUYENTES Return Self As Result AS
+  
+  TP_RUNT_CONTRIBUYENTES_1 TP_RUNT_CONTRIBUYENTES := TP_RUNT_CONTRIBUYENTES(null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null);
+  
+  BEGIN
+         Self := TP_RUNT_CONTRIBUYENTES_1;
+             Return;
+  END TP_RUNT_CONTRIBUYENTES;
+
+END;
+
+
+
+-- Contenedor Object
+
+create or replace type Tp_Runt_Lista_Contribuyentes Is table of Tp_Runt_Contribuyentes;
