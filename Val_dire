@@ -1,0 +1,960 @@
+--head
+
+create or replace PACKAGE                                                                                 PKG_DIRECCIONES_INTERLOCUTORES AS 
+
+--Consulta el historico traspaso
+PROCEDURE sp_consultar_traspaso_runt ; 
+
+--Consulta el Digito de verificacion
+PROCEDURE sp_consultar_digito_veri;
+
+--Consulta el propietario
+PROCEDURE sp_solo_propietario;
+
+--Buscar Direccion solo con la cedula 
+PROCEDURE sp_buscar_dir_documento;
+
+--Buscar Direccion solo con cedula, tipo de documento y placa
+PROCEDURE sp_buscar_direcciones;
+
+END PKG_DIRECCIONES_INTERLOCUTORES;
+
+-- Body
+
+
+create or replace PACKAGE BODY                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           PKG_DIRECCIONES_INTERLOCUTORES AS
+
+
+itp_contribuyente tp_runt_contribuyentes := tp_runt_contribuyentes();
+itp_list_contribuyente tp_runt_lista_contribuyentes := tp_runt_lista_contribuyentes();
+
+iv_cedula VARCHAR2(255 BYTE):='';
+iv_documento VARCHAR2(255 BYTE):='';
+iv_placa VARCHAR2(255 BYTE):='';
+iv_municipio VARCHAR2(255 BYTE):='';
+iv_departamento VARCHAR2(255 BYTE):='';
+
+FUNCTION ft_municipio_no_reporta (av_placa VARCHAR) RETURN VARCHAR AS
+
+/*ISVA
+Nombre     :ft_calcular_digito_veri
+Autor      :Blados.Ospina
+Fecha      :26/11/2018
+Argumento  :av_placa
+Variables  :av_retorno
+Retorno    :av_retorno              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :retorna el codigo y el nombre del municipio
+           :registrado el vehiculos
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lv_retorno VARCHAR2(255 BYTE):='';
+
+BEGIN
+    iv_municipio:='';
+    iv_departamento:='';
+    
+    SELECT id_municipio,municipio,departamento INTO lv_retorno,iv_municipio,iv_departamento 
+    FROM bd_fiscalizacion.fc_vehiculos 
+    WHERE nro_placa = av_placa;
+    
+        RETURN lv_retorno||' '||iv_municipio;
+EXCEPTION 
+WHEN OTHERS THEN
+RETURN lv_retorno;
+END ft_municipio_no_reporta;
+
+PROCEDURE sp_recuperar_datos (av_datos VARCHAR) AS
+
+/*ISVA
+Nombre     :sp_recuperar_datos
+Autor      :Blados.Ospina
+Fecha      :26/11/2018
+Argumento  :av_datos
+Variables  :
+Retorno    :            
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :particiona una cadena en cedula, documento y placa
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lv_datos VARCHAR2(255 BYTE):=av_datos;
+lv_cedula VARCHAR2(255 BYTE):='';
+lv_documento VARCHAR2(255 BYTE):='';
+lv_placa VARCHAR2(255 BYTE):='';
+
+ln_posicion NUMBER:=0;
+lv_datos_temp VARCHAR2(255 BYTE):='';
+
+BEGIN
+   iv_cedula:='';
+   iv_documento:='';
+   iv_placa:='';
+   
+   ln_posicion:= INSTR(lv_datos,';');   
+   lv_cedula:= TRIM(SUBSTR(lv_datos,1,ln_posicion-1));
+   iv_cedula:=lv_cedula;
+   
+   lv_datos_temp:=TRIM(SUBSTR(lv_datos,ln_posicion+1,LENGTH(lv_datos)));
+   ln_posicion:= INSTR(lv_datos_temp,';');  
+   IF ln_posicion = 0 THEN
+        iv_documento:=lv_datos_temp;
+        iv_cedula:=lv_cedula;
+        iv_placa:=lv_placa;
+   ELSE
+    
+    lv_documento:= TRIM(SUBSTR(lv_datos_temp,1,ln_posicion-1));
+    iv_documento:=lv_documento;
+    lv_placa:=SUBSTR(lv_datos_temp,ln_posicion+1,LENGTH(lv_datos));
+    iv_placa:=lv_placa;
+  END IF;
+
+   
+
+EXCEPTION
+WHEN OTHERS THEN
+iv_cedula:=lv_cedula;
+
+   
+END sp_recuperar_datos;
+
+FUNCTION ft_fecha_max_traspaso (av_placa VARCHAR) RETURN VARCHAR as
+
+lv_fecha VARCHAR2(15 BYTE):='';
+
+BEGIN
+    SELECT MAX(fecha_tramite) INTO lv_fecha FROM Bd_Transitos.Arunt_Tramites
+    WHERE nro_placa = av_placa AND id_tramite = 16; 
+    
+    RETURN lv_fecha;
+
+EXCEPTION
+WHEN OTHERS THEN
+RETURN lv_fecha;
+    
+END ft_fecha_max_traspaso;
+
+Procedure sp_consultar_traspaso_runt AS
+
+/*ISVA
+Nombre     :Sp_Consultar_Propietarios_Runt
+Autor      :Blados.Ospina
+Fecha      :26/06/2018
+Variables  :lb_Existe_encabezado, lb_Existe
+Variables  :lv_Name_File, v_MyFileHandle
+Variables  :lcur_placa_prop, lcur_prop
+Retorno    :              
+Proyecto   :PKG_CONSULTAS_MASIVAS_RUNT
+VersiÛn    :1.0
+Objetivo   :Conltas masiva base de datos RUNT
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+26/06/2018  Blados.Ospina   1.0                     */
+
+ltul_read UTL_FILE.FILE_TYPE; 
+lv_placa VARCHAR2(10); 
+lb_Existe_encabezado Boolean:=FALSE;
+lb_Existe Boolean;
+lv_Name_File Varchar2(255 byte):='Traspasos '||To_Char(Sysdate,'dd-mm-yyyy hh24-mi-ss')||'.csv';
+v_MyFileHandle UTL_FILE.FILE_TYPE;
+ld_fecha_max DATE;
+
+Cursor lcur_prop(av_nro_placa varchar,ad_fecha_tramite Date) Is Select Distinct nro_placa,nombre_tramite,fecha_tramite,id_documento_anterior,
+                                                          id_usuario_anterior,id_documento_nuevo,id_usuario_nuevo,porcentaje_prop
+                                          From Bd_Transitos.Arunt_Tramites 
+                                          Where Nro_Placa = av_nro_placa And Id_Tramite In (16) 
+                                          And Fecha_Tramite = ad_fecha_tramite 
+                                          AND (id_usuario_anterior <> id_usuario_nuevo)
+                                          Order By 3 Desc;
+Begin
+    ltul_read := UTL_FILE.FOPEN('DATA_LOAD','placas.csv','R');	
+    v_MyFileHandle := UTL_FILE.FOPEN('DATA_RUNT',lv_Name_File,'W'); 
+        Loop 
+            Begin
+                UTL_FILE.GET_LINE(ltul_read,lv_placa); 
+                If lb_Existe_encabezado = False Then
+                      UTL_FILE.PUT_LINE(v_MyFileHandle,
+                                        'NRO_PLACA'||';'||'NOMBRE_TRAMITE'||';'||'FECHA_TRAMITE'||';'
+                                        ||'ID_DOCUMENTO_ANTERIOR'||';'||'ID_USUARIO_ANTERIOR'||';'
+                                        ||'ID_DOCUMENTO_NUEVO'||';'||'ID_USUARIO_NUEVO'||';'||'PORCENTAJE_PROP');
+                            lb_Existe_encabezado:=True;
+                 End If;
+            lb_Existe:=False;
+                ld_fecha_max := ft_fecha_max_traspaso(lv_placa);
+                For Ln_Index In lcur_prop(lv_placa, ld_fecha_max) Loop
+                        UTL_FILE.PUT_LINE(v_MyFileHandle,ln_index.nro_placa||';'||ln_index.nombre_tramite||';'
+                                          ||ln_index.fecha_tramite||';'||ln_index.id_documento_anterior||';'
+                                          ||ln_index.id_usuario_anterior||';'||ln_index.id_documento_nuevo||';'
+                                          ||ln_index.id_usuario_nuevo||';'||ln_index.porcentaje_prop);
+                            lb_Existe:= True;
+                End Loop;
+                If lb_Existe = False Then
+                    UTL_FILE.PUT_LINE(v_MyFileHandle,
+                                lv_placa||';'||'No registra Novedad');
+                End If; 
+            EXCEPTION 
+                WHEN No_Data_Found THEN EXIT; 
+                WHEN OTHERS THEN 
+                    UTL_FILE.PUT_LINE(v_MyFileHandle,
+                                lv_placa||';'||'Error en la placa');
+                    Continue;
+          End;
+        End Loop;
+    UTL_FILE.FCLOSE(v_MyFileHandle);
+    UTL_FILE.FCLOSE(ltul_read);
+End sp_consultar_traspaso_runt;
+
+FUNCTION ft_existe_prop (av_placa VARCHAR) RETURN VARCHAR AS
+
+lv_fecha VARCHAR(15 BYTE):='';
+
+BEGIN
+    SELECT MAX(fecha_propiedad) INTO lv_fecha FROM bd_Transitos.arunt_propietarios
+    WHERE nro_placa = av_placa;
+    
+    RETURN lv_fecha;
+
+EXCEPTION
+WHEN OTHERS THEN
+RETURN lv_fecha;
+END ft_existe_prop;
+
+PROCEDURE sp_solo_propietario AS
+
+/*ISVA
+Nombre     :Sp_Consultar_Propietarios_Runt
+Autor      :Blados.Ospina
+Fecha      :26/06/2018
+Variables  :lb_Existe_encabezado, lb_Existe
+Variables  :lv_Name_File, v_MyFileHandle
+Variables  :lcur_placa_prop, lcur_prop
+Retorno    :              
+Proyecto   :PKG_CONSULTAS_MASIVAS_RUNT
+VersiÛn    :1.0
+Objetivo   :Conltas masiva base de datos RUNT
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+26/06/2018  Blados.Ospina   1.0                     */
+
+ltul_read UTL_FILE.FILE_TYPE; 
+lv_placa VARCHAR2(10); 
+lb_Existe_encabezado Boolean:=FALSE;
+lb_Existe Boolean;
+lv_Name_File Varchar2(255 byte):='Solo Propietarios '||To_Char(SYSDATE,'dd-mm-yyyy hh24-mi-ss')||'.csv';
+v_MyFileHandle UTL_FILE.FILE_TYPE;
+ld_fecha_max VARCHAR(15 BYTE);
+
+CURSOR lcur_prop(av_placa VARCHAR, ad_fecha VARCHAR) IS SELECT DISTINCT nro_placa,id_usuario,id_documento,
+                                                                        porcentaje_prop,fecha_propiedad
+                                                     FROM bd_Transitos.arunt_propietarios
+                                                     WHERE nro_Placa = av_placa 
+                                                     AND fecha_propiedad = ad_fecha;
+BEGIN
+    ltul_read := UTL_FILE.FOPEN('DATA_LOAD','placas.csv','R');	
+    v_MyFileHandle := UTL_FILE.FOPEN('DATA_RUNT',lv_Name_File,'W'); 
+        LOOP 
+            BEGIN
+                UTL_FILE.GET_LINE(ltul_read,lv_placa); 
+                IF lb_Existe_encabezado = FALSE THEN
+                      UTL_FILE.PUT_LINE(v_MyFileHandle,
+                                        'NRO_PLACA'||';'||'ID_USUARIO'||';'||'ID_DOCUMENTO'||';'
+                                        ||'PORCENTAJE'||';'||'FECHA_PROPIEDAD');
+                            lb_Existe_encabezado:=TRUE;
+                 END IF;
+                lb_Existe:=FALSE;
+                ld_fecha_max := ft_existe_prop(lv_placa);
+                FOR ln_Index IN lcur_prop(lv_placa, ld_fecha_max) LOOP
+                        UTL_FILE.PUT_LINE(v_MyFileHandle,ln_index.nro_placa||';'||ln_index.id_usuario||';'
+                                          ||ln_index.id_documento||';'||ln_index.porcentaje_prop||';'
+                                          ||ln_index.fecha_propiedad);
+                            lb_Existe:= TRUE;
+                END LOOP;
+                IF lb_Existe = FALSE THEN
+                    UTL_FILE.PUT_LINE(v_MyFileHandle,
+                                lv_placa||';'||'No registra propietarios');
+                END IF; 
+            EXCEPTION 
+                WHEN No_Data_Found THEN EXIT; 
+                WHEN OTHERS THEN 
+                    UTL_FILE.PUT_LINE(v_MyFileHandle,
+                                lv_placa||';'||'Error en la placa');
+                    CONTINUE;
+          END;
+        END LOOP;
+    UTL_FILE.FCLOSE(v_MyFileHandle);
+    UTL_FILE.FCLOSE(ltul_read);
+END sp_solo_propietario;
+
+FUNCTION ft_calcular_digito_veri (an_nit NUMBER) RETURN NUMBER AS
+
+/*ISVA
+Nombre     :ft_calcular_digito_veri
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :an_nit
+Variables  :ln_digito_verificacion
+Retorno    :ln_digito_verificacion              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :retorna el digito de verificacion
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+ln_digito_verificacion VARCHAR2(1 BYTE):='';
+
+
+BEGIN
+    ln_digito_verificacion:=depuracion.pkg_ds_estandariza_registros.ft_calcular_digito_verifica(a_nit => an_nit);
+    
+    RETURN ln_digito_verificacion;
+
+EXCEPTION
+WHEN OTHERS THEN
+    RETURN ln_digito_verificacion;
+    
+END ft_calcular_digito_veri;
+
+FUNCTION ft_validar_numero (av_numero VARCHAR) RETURN NUMBER AS
+
+/*ISVA
+Nombre     :ft_validar_numero
+Autor      :Blados.Ospina
+Fecha      :20/11/2018
+Argumento  :av_numero
+Variables  :ln_numero
+Retorno    :ln_numero              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :valida si el numero o celular es valido
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+
+ln_numero NUMBER:=0;
+lv_numero VARCHAR(10):='';
+le_error EXCEPTION;
+
+BEGIN
+        ln_numero :=TO_NUMBER(depuracion.pkg_ds_estandariza_registros.ft_estandarizar_telefono(av_numero));
+        
+            IF LENGTH(ln_numero) IN (10,7) THEN
+                RETURN ln_numero;
+            ELSE
+                RAISE le_error;
+            END IF;
+           
+EXCEPTION 
+WHEN OTHERS THEN
+RETURN lv_numero;
+END ft_validar_numero;
+
+PROCEDURE sp_consultar_digito_veri AS 
+
+/*ISVA
+Nombre     :sp_consultar_digito_veri
+Autor      :Blados.Ospina
+Fecha      :20/11/2018
+Argumento  :
+Variables  :lv_id_usuario, ltul_read, lb_existe_mun
+Variables  :lb_existe_dir
+Retorno    :lb_existe            
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :Genera reporte con digito de verificacion
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lb_Existe_encabezado Boolean:=FALSE;
+lv_Name_File VARCHAR2(255 BYTE):='Nit con Digito Verificacion'||To_Char(Sysdate,'ddmmyyyy hh24-mi-ss')||'.csv';
+v_MyFileHandle UTL_FILE.FILE_TYPE;
+
+lv_id_usuario VARCHAR2(30); 
+ltul_read UTL_FILE.FILE_TYPE; 
+lv_digito VARCHAR2(255 BYTE);
+
+
+
+BEGIN
+     ltul_read := UTL_FILE.FOPEN('DATA_LOAD','id_usuarios.csv','R');	
+     v_MyFileHandle := UTL_FILE.FOPEN('DATA_RUNT',lv_Name_File,'W'); 
+     LOOP
+        BEGIN
+            UTL_FILE.GET_LINE(ltul_read,lv_id_usuario); 
+            lv_digito:='';
+          
+              IF lb_Existe_encabezado = FALSE Then
+                  UTL_FILE.PUT_LINE(v_MyFileHandle,'NIT'||';'||'DIGITO_VERIFICACION');
+                        lb_Existe_encabezado:=TRUE;
+              END IF;
+            IF LENGTH(lv_id_usuario) = 9 THEN
+                 lv_digito:= ft_calcular_digito_veri(lv_id_usuario);
+            END IF;
+                UTL_FILE.PUT_LINE(v_MyFileHandle,lv_id_usuario||';'||lv_digito);                  
+        EXCEPTION
+            WHEN No_Data_Found THEN 
+            EXIT; 
+            WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE(Dbms_Utility.Format_Error_Backtrace);
+        END;
+    END LOOP;
+    UTL_FILE.FCLOSE(v_MyFileHandle);
+    UTL_FILE.FCLOSE(ltul_read);
+    
+END sp_consultar_digito_veri;
+
+FUNCTION ft_departamento (av_codigo_direccion VARCHAR2) RETURN VARCHAR AS
+
+/*ISVA
+Nombre     :ft_departamento
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :av_codigo_direccion
+Variables  :lv_departamento
+Retorno    :              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :Recupera el departamento
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lv_departamento VARCHAR2(255 BYTE):='';
+
+BEGIN
+
+SELECT departamento INTO lv_departamento  FROM bd_fiscalizacion.Fc_Municipio_Departamento
+WHERE Divipo = av_codigo_direccion AND ROWNUM = 1;
+
+
+    RETURN lv_departamento;
+
+    EXCEPTION 
+    WHEN OTHERS THEN
+    RETURN lv_departamento;
+
+END ft_departamento;
+
+FUNCTION ft_validar_departamento (av_codigo_direccion VARCHAR2) RETURN VARCHAR AS
+
+/*ISVA
+Nombre     :ft_validar_departamento
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :av_codigo_direccion
+Variables  :lb_existe
+Retorno    :              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :valida si el departamento esta homologado
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lb_existe VARCHAR2(10 BYTE):='FALSE';
+
+BEGIN
+
+SELECT DECODE(COUNT(1),1,'TRUE','FALSE') INTO lb_existe  FROM bd_fiscalizacion.Fc_Municipio_Departamento
+WHERE Divipo = av_codigo_direccion AND ROWNUM = 1;
+
+
+    RETURN lb_existe;
+
+    EXCEPTION 
+    WHEN OTHERS THEN
+    RETURN lb_existe;
+
+END ft_validar_departamento;
+
+FUNCTION ft_validar_estructura (av_direccion varchar2) return number as
+
+/*ISVA
+Nombre     :ft_validar_estructura
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :av_direccion
+Variables  :
+Retorno    :              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :valida si la direccion es valida
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lvDireccion Varchar2(100);
+lvEstructuraTemp varchar2(100);
+lvEstructura varchar2(100);
+lvCaracter varchar2(1);
+lvCaracterAnteriorAnterior varchar2(1); 
+lvCaracterAnterior varchar2(1) :='*';
+lnLongitud Number:=0;
+lnContador Number:=2;
+lnCumple Number:=0;
+lnBloqueNumero number := 0;
+lnBloqueCaracter number := 0;
+
+begin
+ -- lvCaracterAnterior:='';
+  --Remplazo Caracteres Letras Por "~" Y Numeros Por "@" Para Comparar Mas Facilmente El Formato
+  lvDireccion := Trim(av_direccion);
+  lvDireccion := replace(lvDireccion,'-',' ');  
+  lvDireccion := TRANSLATE(Upper(lvDireccion),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','~~~~~~~~~~~~~~~~~~~~~~~~~~');
+  lvDireccion := TRANSLATE(lvDireccion,'0123456789','@@@@@@@@@@');  
+
+lnLongitud:= length(lvDireccion);
+
+lvEstructura := Substr(lvDireccion,1,1); -- Mapeo el primer caracter
+
+While lnContador <= lnLongitud  
+Loop
+  lvCaracter := Substr(lvDireccion,lnContador,1);  
+ -- lvCaracterSiguiente := Substr(lvDireccion, (lnContador - 2),1);
+  
+  --Permite validar las direcciones con estructura CL 10 1020 o CL 10B 1020
+  If(lvEstructura In ('~ @ ','~ @ ~ ')) Then
+      if(Substr(lvDireccion,lnContador,4) = '@@@@') then
+        lvEstructura := lvEstructura || '@@@@';
+        return 0;
+      End if;  
+  End If;
+  
+  If lvCaracter = '~' Then   
+    If (lvCaracter != lvCaracterAnterior)then 
+      If(lvCaracter != lvCaracterAnteriorAnterior) Then    
+         lvEstructura := lvEstructura || lvCaracter;
+         lvCaracterAnteriorAnterior := lvCaracterAnterior;
+         lvCaracterAnterior := lvCaracter;
+       End If;
+    End If;
+  Elsif lvCaracter = '@' Then   
+    If lvCaracter != lvCaracterAnterior Then
+       lvEstructura := lvEstructura || lvCaracter;
+       lvCaracterAnteriorAnterior := lvCaracterAnterior;
+       lvCaracterAnterior := lvCaracter;
+    End If;
+  Elsif lvCaracter = ' ' Then
+    If lvCaracter != lvCaracterAnterior Then
+        lvEstructura := lvEstructura || lvCaracter;
+         lvCaracterAnteriorAnterior := lvCaracterAnterior;
+         lvCaracterAnterior := lvCaracter;
+    End If;
+  End If; 
+  
+  lnContador := lnContador + 1;  
+  
+End Loop;  
+
+-- Valido que la dirección tenga estructura válida
+Select count(1) into lnCumple
+from bd_fiscalizacion.fc_estructura_Direccion 
+where lvEstructura like '%' || Estructura ||'%';
+
+If(lnCumple > 0)then
+  Return 1;
+else
+  Return 0;
+end if;
+
+END ft_validar_estructura;
+
+FUNCTION ft_validar_estructura_final (av_direccion VARCHAR) RETURN VARCHAR AS 
+
+/*ISVA
+Nombre     :ft_validar_estructura_final
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :av_direccion
+Variables  :
+Retorno    :              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :vvalida otros tipos de direccion
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+TYPE tp_Array_dir IS VARRAY(5) OF VARCHAR2(100 BYTE);
+array_dir tp_Array_dir:=tp_Array_dir('VRD','KM','FCA','CRG');
+
+lv_validador VARCHAR2(10 BYTE) :='FALSE';
+lv_direccion_estandarizada VARCHAR2(255 BYTE):='';
+ln_dir_valida NUMBER:=0;
+
+BEGIN
+                            
+lv_direccion_estandarizada := Trim(correccion_datos.pkg_ds_estandariza_runt.ft_estandarizar_direccion(av_direccion));
+       FOR i IN 1..array_dir.COUNT LOOP
+         --Varifica 
+          ln_dir_valida := instr(lv_direccion_estandarizada,array_dir(i));
+             IF ln_dir_valida > 0 then 
+                    lv_validador := 'TRUE';
+             END IF;       
+       END LOOP;
+       IF lv_validador = 'FALSE' THEN
+            ln_dir_valida := ft_validar_estructura(lv_direccion_estandarizada);          
+          IF ln_dir_valida > 0 THEN
+               lv_validador := 'TRUE';   
+         END IF;
+       END IF;
+    
+    RETURN lv_validador;
+    
+END ft_validar_estructura_final; 
+
+PROCEDURE Sp_Registrar_Direcciones AS
+
+/*ISVA
+Nombre     :Sp_Registrar_Direcciones
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :av_direccion
+Variables  :
+Retorno    :              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :registra los datos procesados
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lb_Existe_encabezado Boolean:=FALSE;
+lv_Name_File VARCHAR2(255 BYTE):='Direccion Contribuyentes runt '||To_Char(Sysdate,'ddmmyyyy hh24-mi-ss')||'.csv';
+v_MyFileHandle UTL_FILE.FILE_TYPE;
+
+Begin
+   
+    v_MyFileHandle := UTL_FILE.FOPEN('DATA_RUNT',lv_Name_File,'W'); 
+              IF lb_Existe_encabezado = FALSE Then
+                  UTL_FILE.PUT_LINE(v_MyFileHandle,'IDENTIFICACION'||';'||'DOCUMENTO'||';'||'DIGITO_VERIFICACION'||';'||'NOMBRES'||';'
+                                                    ||'APELLIDOS'||';'||'DIRECCION'||';'||'MUNICIPIO'||';'||'DEPARTAMENTO'||';'
+                                                    ||'TELEFONO'||';'||'CELULAR'||';'||'EMAIL'||';'||'FECHA_DIRECCION'||';'||'ESTADO');
+                        lb_Existe_encabezado:=TRUE;
+              END IF;
+                FOR Ln_Index IN 1..itp_list_contribuyente.COUNT()  LOOP
+  
+                        
+                             UTL_FILE.PUT_LINE(v_MyFileHandle,
+                            itp_list_contribuyente(ln_index).id_usuario||';'
+                            ||itp_list_contribuyente(Ln_Index).id_documento||';'
+                            ||itp_list_contribuyente(Ln_Index).digito_verificacion||';'
+                            ||itp_list_contribuyente(Ln_Index).nombres||';'
+                            ||itp_list_contribuyente(Ln_Index).apellidos||';'
+                            ||itp_list_contribuyente(Ln_Index).direccion||';'
+                            ||itp_list_contribuyente(Ln_Index).municipio||';'
+                            ||itp_list_contribuyente(Ln_Index).departamento||';'
+                            ||itp_list_contribuyente(Ln_Index).telefono||';'
+                            ||itp_list_contribuyente(Ln_Index).celular||';'
+                            ||itp_list_contribuyente(Ln_Index).email||';'
+                            ||itp_list_contribuyente(Ln_Index).radicado||';'
+                            ||itp_list_contribuyente(Ln_Index).estado);
+            END LOOP;
+    UTL_FILE.FCLOSE(v_MyFileHandle);
+    
+End Sp_Registrar_Direcciones;
+
+PROCEDURE sp_resetar_var AS
+
+/*ISVA
+Nombre     :sp_resetar_var
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :
+Variables  :
+Retorno    :              
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :restablece los datos
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+BEGIN
+     itp_contribuyente.id_usuario := '';    
+     itp_contribuyente.id_documento := '';  
+     itp_contribuyente.digito_verificacion := ''; 
+     itp_contribuyente.nombres := ''; 
+     itp_contribuyente.apellidos := ''; 
+     itp_contribuyente.direccion := ''; 
+     itp_contribuyente.telefono := '';   
+     itp_contribuyente.fax :='';  
+     itp_contribuyente.email := ''; 
+     itp_contribuyente.celular := ''; 
+     itp_contribuyente.municipio := ''; 
+     itp_contribuyente.departamento := ''; 
+     itp_contribuyente.estado := ''; 
+     iv_municipio:='';
+     iv_departamento:='';
+END sp_resetar_var;
+
+FUNCTION ft_fecha_radicado (an_radicado NUMBER) RETURN VARCHAR AS
+
+lv_fecha VARCHAR2(20):='';
+
+BEGIN
+    SELECT SUBSTR(rango,14,10) INTO lv_fecha  FROM bd_transitos.arunt_maestro 
+    WHERE id_radicado = an_radicado;
+        
+        RETURN lv_fecha;
+
+EXCEPTION 
+WHEN OTHERS THEN
+RETURN lv_fecha;
+
+END ft_fecha_radicado;
+ 
+PROCEDURE sp_buscar_direcciones AS 
+
+/*ISVA
+Nombre     :sp_Iniciar
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :
+Variables  :lv_id_usuario, ltul_read, lb_existe_mun
+Variables  :lb_existe_dir
+Retorno    :lb_existe            
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :recupera la cedula para consultar y validar la informacion 
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lv_id_usuario VARCHAR2(30); 
+ltul_read UTL_FILE.FILE_TYPE; 
+lb_existe_mun VARCHAR2(255);
+lb_existe_dir VARCHAR2(255);
+lb_existe BOOLEAN;
+
+Cursor lcur_dir(av_id_usuario VARCHAR, av_id_documento VARCHAR) Is SELECT DISTINCT  id_usuario, id_documento, nombres, apellidos, direccion,telefono ,
+                                                           fax , email, celular, Id_Ciudad_Dir, id_direccion,id_radicado, nombre_ciudad_dir
+                                            FROM bd_transitos.Arunt_Contribuyentes Ac
+                                            WHERE Id_Usuario = av_id_usuario and id_documento = av_id_documento
+                                            ORDER BY To_Number(id_radicado) Desc, To_Number(id_direccion) Desc;
+BEGIN
+     ltul_read := UTL_FILE.FOPEN('DATA_LOAD','id_usuarios.csv','R');	
+     LOOP
+        BEGIN
+            UTL_FILE.GET_LINE(ltul_read,lv_id_usuario);
+
+                sp_recuperar_datos(lv_id_usuario);
+       
+            
+                FOR ln_index IN lcur_dir(iv_cedula,iv_documento) LOOP
+                    lb_existe:=TRUE;
+                    lb_existe_mun :='FALSE';
+                    lb_existe_dir :='FALSE';
+                    sp_resetar_var();
+                    
+                        lb_existe_mun :=ft_validar_departamento(ln_index.Id_Ciudad_Dir);
+                        lb_existe_dir:=ft_validar_estructura_final(ln_index.direccion);
+                       
+                        IF lb_existe_mun = 'TRUE' AND lb_existe_dir  = 'TRUE' THEN
+                            itp_contribuyente.id_usuario := ln_index.id_usuario;    
+                            itp_contribuyente.id_documento := ln_index.id_documento;  
+                            IF ln_index.id_documento IN ('N','NIT') AND LENGTH(ln_index.id_usuario) = 9  THEN
+                                itp_contribuyente.digito_verificacion := ft_calcular_digito_veri(ln_index.id_usuario);  
+                            END IF;
+                            itp_contribuyente.nombres := ln_index.nombres;  
+                            itp_contribuyente.apellidos := ln_index.apellidos;  
+                            itp_contribuyente.direccion := Trim(correccion_datos.pkg_ds_estandariza_runt.ft_estandarizar_direccion(ln_index.direccion)); 
+                            itp_contribuyente.telefono := ft_validar_numero(ln_index.telefono);  
+                            itp_contribuyente.fax := ln_index.fax;  
+                            itp_contribuyente.email := ln_index.email;
+                            itp_contribuyente.celular := ft_validar_numero(ln_index.celular);
+                            itp_contribuyente.municipio := ln_index.nombre_ciudad_dir;
+                            itp_contribuyente.departamento := ft_departamento(ln_index.id_Ciudad_dir);
+                            itp_contribuyente.radicado := ft_fecha_radicado(ln_index.id_radicado);
+                            EXIT;
+                        ELSE
+                            itp_contribuyente.id_usuario := ln_index.id_usuario;    
+                            itp_contribuyente.id_documento := ln_index.id_documento;  
+                            IF ln_index.id_documento IN ('N', 'NIT') AND LENGTH(ln_index.id_usuario) = 9 THEN
+                                itp_contribuyente.digito_verificacion := ft_calcular_digito_veri(ln_index.id_usuario);  
+                            END IF;
+                            itp_contribuyente.nombres := ln_index.nombres;  
+                            itp_contribuyente.apellidos := ln_index.apellidos;  
+                            itp_contribuyente.direccion := 'NO REPORTA - '||ft_municipio_no_reporta(iv_placa); 
+                            itp_contribuyente.telefono := ft_validar_numero(ln_index.telefono);  
+                            itp_contribuyente.fax := ln_index.fax;  
+                            itp_contribuyente.email := ln_index.email;
+                            itp_contribuyente.celular := ft_validar_numero(ln_index.celular);
+                            itp_contribuyente.municipio := iv_municipio;
+                            itp_contribuyente.departamento := iv_departamento;
+                        END IF;
+                        
+                END LOOP;
+                IF lb_existe = TRUE THEN
+                    itp_list_contribuyente.Extend;
+                    itp_list_contribuyente(itp_list_contribuyente.Count()):=itp_contribuyente;
+                ELSE
+                    itp_contribuyente.id_usuario := iv_cedula;  
+                    itp_contribuyente.id_documento := iv_documento; 
+                    itp_contribuyente.estado := 'No registra informacion';  
+                    itp_list_contribuyente.Extend;
+                    itp_list_contribuyente(itp_list_contribuyente.Count()):=itp_contribuyente;
+                END IF;
+                
+                lb_existe:=FALSE;
+                sp_resetar_var();
+        EXCEPTION
+            WHEN No_Data_Found THEN 
+            EXIT; 
+            WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE(Dbms_Utility.Format_Error_Backtrace);
+        END;
+    END LOOP;
+    
+    Sp_Registrar_Direcciones;
+        
+    
+END sp_buscar_direcciones;
+
+PROCEDURE sp_buscar_dir_documento AS 
+
+/*ISVA
+Nombre     :sp_Iniciar
+Autor      :Blados.Ospina
+Fecha      :08/11/2018
+Argumento  :
+Variables  :lv_id_usuario, ltul_read, lb_existe_mun
+Variables  :lb_existe_dir
+Retorno    :lb_existe            
+Proyecto   :PKG_DIRECCIONES_INTERLOCUTORES
+Version    :1.0
+Objetivo   :recupera la cedula para consultar y validar la informacion 
+**************************************************************************
+control de cambios realizados por desarrolladores
+**************************************************************************
+Fecha       Autor            Version  Modificacion   
+                                                    */
+
+lv_id_usuario VARCHAR2(30); 
+ltul_read UTL_FILE.FILE_TYPE; 
+lb_existe_mun VARCHAR2(255);
+lb_existe_dir VARCHAR2(255);
+lb_existe BOOLEAN;
+
+Cursor lcur_dir(av_id_usuario VARCHAR) Is SELECT DISTINCT  id_usuario, id_documento, nombres, apellidos, direccion,telefono ,
+                                                           fax , email, celular, Id_Ciudad_Dir, id_direccion,id_radicado, nombre_ciudad_dir
+                                            FROM bd_transitos.Arunt_Contribuyentes Ac
+                                            WHERE Id_Usuario = av_id_usuario
+                                            ORDER BY To_Number(id_radicado) Desc, To_Number(id_direccion) Desc;
+BEGIN
+     ltul_read := UTL_FILE.FOPEN('DATA_LOAD','id_usuarios.csv','R');	
+     LOOP
+        BEGIN
+            UTL_FILE.GET_LINE(ltul_read,lv_id_usuario);
+
+
+       
+            
+                FOR ln_index IN lcur_dir(lv_id_usuario) LOOP
+                    lb_existe:=TRUE;
+                    lb_existe_mun :='FALSE';
+                    lb_existe_dir :='FALSE';
+                    sp_resetar_var();
+                    
+                        lb_existe_mun :=ft_validar_departamento(ln_index.Id_Ciudad_Dir);
+                        lb_existe_dir:=ft_validar_estructura_final(ln_index.direccion);
+                       
+                        IF lb_existe_mun = 'TRUE' AND lb_existe_dir  = 'TRUE' THEN
+                            itp_contribuyente.id_usuario := ln_index.id_usuario;    
+                            itp_contribuyente.id_documento := ln_index.id_documento;  
+                            IF ln_index.id_documento IN ('N','NIT') AND LENGTH(ln_index.id_usuario) = 9  THEN
+                                itp_contribuyente.digito_verificacion := ft_calcular_digito_veri(ln_index.id_usuario);  
+                            END IF;
+                            itp_contribuyente.nombres := ln_index.nombres;  
+                            itp_contribuyente.apellidos := ln_index.apellidos;  
+                            itp_contribuyente.direccion := Trim(correccion_datos.pkg_ds_estandariza_runt.ft_estandarizar_direccion(ln_index.direccion)); 
+                            itp_contribuyente.telefono := ft_validar_numero(ln_index.telefono);  
+                            itp_contribuyente.fax := ln_index.fax;  
+                            itp_contribuyente.email := ln_index.email;
+                            itp_contribuyente.celular := ft_validar_numero(ln_index.celular);
+                            itp_contribuyente.municipio := ln_index.nombre_ciudad_dir;
+                            itp_contribuyente.departamento := ft_departamento(ln_index.id_Ciudad_dir);
+                            itp_contribuyente.id_ciudad_dir := ln_index.id_Ciudad_dir;
+                            itp_contribuyente.radicado := ft_fecha_radicado(ln_index.id_radicado);
+                            EXIT;
+                        ELSE
+                            itp_contribuyente.id_usuario := ln_index.id_usuario;    
+                            itp_contribuyente.id_documento := ln_index.id_documento;  
+                            IF ln_index.id_documento IN ('N', 'NIT') AND LENGTH(ln_index.id_usuario) = 9 THEN
+                                itp_contribuyente.digito_verificacion := ft_calcular_digito_veri(ln_index.id_usuario);  
+                            END IF;
+                            itp_contribuyente.nombres := ln_index.nombres;  
+                            itp_contribuyente.apellidos := ln_index.apellidos;  
+                            itp_contribuyente.direccion := 'NO REPORTA - '||ft_municipio_no_reporta(iv_placa); 
+                            itp_contribuyente.telefono := ft_validar_numero(ln_index.telefono);  
+                            itp_contribuyente.fax := ln_index.fax;  
+                            itp_contribuyente.email := ln_index.email;
+                            itp_contribuyente.celular := ft_validar_numero(ln_index.celular);
+                            itp_contribuyente.municipio := iv_municipio;
+                            itp_contribuyente.departamento := iv_departamento;
+                            itp_contribuyente.id_ciudad_dir := ln_index.id_Ciudad_dir;
+                        END IF;
+                        
+                END LOOP;
+                IF lb_existe = TRUE THEN
+                    itp_list_contribuyente.Extend;
+                    itp_list_contribuyente(itp_list_contribuyente.Count()):=itp_contribuyente;
+                ELSE
+                    itp_contribuyente.id_usuario := lv_id_usuario;  
+                    itp_contribuyente.id_documento := iv_documento; 
+                    itp_contribuyente.estado := 'No registra informacion';  
+                    itp_list_contribuyente.Extend;
+                    itp_list_contribuyente(itp_list_contribuyente.Count()):=itp_contribuyente;
+                END IF;
+                
+                lb_existe:=FALSE;
+                sp_resetar_var();
+        EXCEPTION
+            WHEN No_Data_Found THEN 
+            EXIT; 
+            WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE(Dbms_Utility.Format_Error_Backtrace);
+        END;
+    END LOOP;
+    
+    Sp_Registrar_Direcciones;
+        
+    
+END sp_buscar_dir_documento;
+    
+END PKG_DIRECCIONES_INTERLOCUTORES;
